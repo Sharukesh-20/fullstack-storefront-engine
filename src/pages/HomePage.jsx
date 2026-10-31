@@ -31,11 +31,11 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="relative rounded-xs overflow-hidden bg-[#121212] min-h-[480px] sm:min-h-[560px] lg:min-h-[620px] flex items-end border border-[#e8e5dc] shadow-sm">
 
-            {/* Lifestyle storefront & product campaign photograph */}
+            {/* Updated Minimalist Tech & Lifestyle Workstation Hero Image */}
             <img
-              src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=2000&q=80"
-              alt="Curated everyday essentials and lifestyle goods"
-              className="absolute inset-0 w-full h-full object-cover object-center filter brightness-95"
+              src="https://images.unsplash.com/photo-1499951360447-b19be8fe80f5?auto=format&fit=crop&w=2000&q=85"
+              alt="Forma Mart curated everyday essentials and tech accessories"
+              className="absolute inset-0 w-full h-full object-cover object-center filter brightness-90"
             />
 
             {/* Scrim for text contrast and editorial depth */}
@@ -53,7 +53,7 @@ export default function HomePage() {
                   <span>Edition 2026</span>
                 </span>
                 <span className="text-[11px] uppercase tracking-[0.22em] font-medium text-zinc-300">
-                  Forma Store
+                  Forma Mart Store
                 </span>
               </div>
 

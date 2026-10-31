@@ -48,14 +48,14 @@ export default function SiteHeader() {
             </button>
           </div>
 
-          {/* Forma Brand Wordmark with Electric Lime Accent */}
+          {/* Forma Mart Brand Wordmark with Electric Lime Accent */}
           <div className="flex items-center gap-3">
             <Link 
               to="/" 
-              className="group flex items-center gap-1.5 text-xl sm:text-2xl font-bold tracking-[0.28em] uppercase text-[#121212] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#121212] rounded-xs"
-              aria-label="Forma Home"
+              className="group flex items-center gap-1.5 text-xl sm:text-2xl font-bold tracking-[0.24em] uppercase text-[#121212] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#121212] rounded-xs"
+              aria-label="Forma Mart Home"
             >
-              <span>Forma</span>
+              <span>Forma Mart</span>
               <span className="h-1.5 w-1.5 rounded-full bg-[#ccff00] ring-2 ring-[#121212] transition-transform duration-300 group-hover:scale-125" />
             </Link>
           </div>
