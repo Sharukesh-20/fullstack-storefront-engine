@@ -1,14 +1,12 @@
 /**
- * Forma Frontend API Service
+ * Forma Mart Frontend API Service
  *
  * Centralized, reusable client for interacting with the Express/MongoDB backend API.
- * Uses VITE_API_BASE_URL with safe fallback, error normalization, and request cancellation.
+ * Includes automatic offline/local catalogue fallback when local MongoDB is not configured.
  */
 
-/**
- * In production, fall back to the live Render backend deployment.
- * In local development (import.meta.env.DEV), fall back to '/api' (Vite proxy).
- */
+import * as localCatalog from '../data/products.js'
+
 const PRODUCTION_API_URL = 'https://codealpha-e-commerce-77s9.onrender.com/api'
 
 const API_BASE_URL = (
@@ -29,13 +27,25 @@ export class ApiError extends Error {
 }
 
 /**
+ * Extracts the local product array safely from src/data/products.js
+ */
+const getLocalProductsList = () => {
+  const raw =
+    localCatalog.products ||
+    localCatalog.PRODUCTS ||
+    localCatalog.default ||
+    Object.values(localCatalog).find((val) => Array.isArray(val)) ||
+    []
+  return Array.isArray(raw) ? raw.map(normalizeProduct).filter(Boolean) : []
+}
+
+/**
  * Normalizes a product document from the API to guarantee
  * consistent field shapes for all frontend components and CartContext.
  */
 export const normalizeProduct = (p) => {
   if (!p || typeof p !== 'object') return null
 
-  // Ensure specs is a plain JavaScript object
   let specsObj = p.specs || {}
   if (specsObj instanceof Map) {
     specsObj = Object.fromEntries(specsObj.entries())
@@ -45,7 +55,6 @@ export const normalizeProduct = (p) => {
 
   return {
     ...p,
-    // Preserve custom stable string ID (e.g. 'forma-01') falling back to MongoDB _id
     id: p.id || p._id,
     _id: p._id || p.id,
     slug: p.slug || '',
@@ -54,7 +63,6 @@ export const normalizeProduct = (p) => {
     category: p.category || 'General',
     price: typeof p.price === 'number' ? p.price : 0,
     originalPrice: typeof p.originalPrice === 'number' ? p.originalPrice : null,
-    // Ensure image is a singular string URL
     image: p.image || (Array.isArray(p.images) && p.images[0]) || '',
     description: p.description || '',
     features: Array.isArray(p.features) ? p.features : [],
@@ -65,36 +73,60 @@ export const normalizeProduct = (p) => {
 }
 
 /**
- * Safe fetch with automatic retry for server cold-starts or transient 503s
+ * Filters, sorts, and paginates local fallback data to match the Express API response shape
  */
-const fetchWithRetry = async (url, options = {}, retries = 2, delayMs = 1500) => {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(url, options)
+const queryLocalProducts = ({ search, category, sort = 'featured', page = 1, limit = 12 } = {}) => {
+  let list = [...getLocalProductsList()]
 
-      // If server is temporarily unavailable (cold start / DB reconnecting), retry gracefully
-      if (response.status === 503 && attempt < retries && !options?.signal?.aborted) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)))
-        continue
-      }
+  if (search && typeof search === 'string' && search.trim()) {
+    const q = search.trim().toLowerCase()
+    list = list.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.tagline.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q)
+    )
+  }
 
-      return response
-    } catch (err) {
-      if (err.name === 'AbortError' || options?.signal?.aborted) {
-        throw err
-      }
-      if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)))
-        continue
-      }
-      throw err
-    }
+  if (category && typeof category === 'string' && category.trim() && category.trim().toLowerCase() !== 'all') {
+    const cat = category.trim().toLowerCase()
+    list = list.filter((p) => p.category.toLowerCase() === cat)
+  }
+
+  const normalizedSort = sort === 'curated' ? 'featured' : sort
+  if (normalizedSort === 'price-asc' || normalizedSort === 'price_asc') {
+    list.sort((a, b) => a.price - b.price)
+  } else if (normalizedSort === 'price-desc' || normalizedSort === 'price_desc') {
+    list.sort((a, b) => b.price - a.price)
+  } else if (normalizedSort === 'name-asc' || normalizedSort === 'alphabetical' || normalizedSort === 'alpha') {
+    list.sort((a, b) => a.name.localeCompare(b.name))
+  } else {
+    list.sort((a, b) => Number(b.featured) - Number(a.featured))
+  }
+
+  const pageNum = Math.max(1, Number(page) || 1)
+  const limitNum = Math.max(1, Number(limit) || 12)
+  const total = list.length
+  const totalPages = Math.max(1, Math.ceil(total / limitNum))
+  const start = (pageNum - 1) * limitNum
+  const data = list.slice(start, start + limitNum)
+
+  return {
+    success: true,
+    count: data.length,
+    total,
+    page: pageNum,
+    totalPages,
+    limit: limitNum,
+    hasNextPage: pageNum < totalPages,
+    hasPrevPage: pageNum > 1,
+    data
   }
 }
 
 /**
- * Fetch products list with optional search, category, sort, and pagination.
- * Supports passing an AbortSignal to cancel in-flight requests.
+ * Fetch products list with automatic fallback to local catalog if local DB is offline
  */
 export const fetchProducts = async (
   { search, category, sort = 'featured', page = 1, limit = 12 } = {},
@@ -110,7 +142,6 @@ export const fetchProducts = async (
     params.set('category', category.trim())
   }
 
-  // Map legacy frontend 'curated' sort to backend 'featured'
   const normalizedSort = sort === 'curated' ? 'featured' : sort
   if (normalizedSort) {
     params.set('sort', normalizedSort)
@@ -123,12 +154,11 @@ export const fetchProducts = async (
   const url = `${API_BASE_URL}/products${queryString ? `?${queryString}` : ''}`
 
   try {
-    const response = await fetchWithRetry(url, { signal })
+    const response = await fetch(url, { signal })
     const json = await response.json().catch(() => null)
 
     if (!response.ok) {
-      const errorMsg = json?.message || `Failed to fetch products (HTTP ${response.status})`
-      throw new ApiError(errorMsg, response.status, json)
+      throw new ApiError(json?.message || `Failed to fetch products (HTTP ${response.status})`, response.status, json)
     }
 
     return {
@@ -143,35 +173,35 @@ export const fetchProducts = async (
       data: Array.isArray(json?.data) ? json.data.map(normalizeProduct).filter(Boolean) : []
     }
   } catch (error) {
-    // If request was aborted by AbortController, rethrow as-is
     if (error.name === 'AbortError') throw error
-    if (error instanceof ApiError) throw error
 
-    throw new ApiError(
-      error.message || 'Unable to connect to Forma server. Please check your network.',
-      0
-    )
+    const fallback = queryLocalProducts({ search, category, sort, page, limit })
+    if (fallback.total > 0) {
+      return fallback
+    }
+
+    if (error instanceof ApiError) throw error
+    throw new ApiError(error.message || 'Unable to connect to Forma Mart server.', 0)
   }
 }
 
 /**
- * Fetch a single product by its URL slug.
- * Supports passing an AbortSignal.
+ * Fetch a single product by its URL slug with automatic local fallback
  */
 export const fetchProductBySlug = async (slug, { signal } = {}) => {
   if (!slug || typeof slug !== 'string' || !slug.trim()) {
     throw new ApiError('Product slug is required.', 400)
   }
 
-  const url = `${API_BASE_URL}/products/slug/${encodeURIComponent(slug.trim())}`
+  const cleanSlug = slug.trim()
+  const url = `${API_BASE_URL}/products/slug/${encodeURIComponent(cleanSlug)}`
 
   try {
-    const response = await fetchWithRetry(url, { signal })
+    const response = await fetch(url, { signal })
     const json = await response.json().catch(() => null)
 
     if (!response.ok) {
-      const errorMsg = json?.message || `Product not found (HTTP ${response.status})`
-      throw new ApiError(errorMsg, response.status, json)
+      throw new ApiError(json?.message || `Product not found (HTTP ${response.status})`, response.status, json)
     }
 
     return {
@@ -180,30 +210,32 @@ export const fetchProductBySlug = async (slug, { signal } = {}) => {
     }
   } catch (error) {
     if (error.name === 'AbortError') throw error
-    if (error instanceof ApiError) throw error
 
-    throw new ApiError(
-      error.message || 'Unable to connect to Forma server. Please check your network.',
-      0
-    )
+    const localMatch = getLocalProductsList().find((p) => p.slug === cleanSlug)
+    if (localMatch) {
+      return { success: true, data: localMatch }
+    }
+
+    if (error instanceof ApiError) throw error
+    throw new ApiError(error.message || 'Unable to connect to Forma Mart server.', 0)
   }
 }
 
 /**
- * Fetch a single product by its MongoDB ObjectId.
+ * Fetch a single product by its ID with automatic local fallback
  */
 export const fetchProductById = async (id, { signal } = {}) => {
   if (!id) throw new ApiError('Product ID is required.', 400)
 
-  const url = `${API_BASE_URL}/products/${encodeURIComponent(id)}`
+  const cleanId = String(id).trim()
+  const url = `${API_BASE_URL}/products/${encodeURIComponent(cleanId)}`
 
   try {
-    const response = await fetchWithRetry(url, { signal })
+    const response = await fetch(url, { signal })
     const json = await response.json().catch(() => null)
 
     if (!response.ok) {
-      const errorMsg = json?.message || `Failed to fetch product (HTTP ${response.status})`
-      throw new ApiError(errorMsg, response.status, json)
+      throw new ApiError(json?.message || `Failed to fetch product (HTTP ${response.status})`, response.status, json)
     }
 
     return {
@@ -212,11 +244,15 @@ export const fetchProductById = async (id, { signal } = {}) => {
     }
   } catch (error) {
     if (error.name === 'AbortError') throw error
-    if (error instanceof ApiError) throw error
 
-    throw new ApiError(
-      error.message || 'Unable to connect to Forma server. Please check your network.',
-      0
+    const localMatch = getLocalProductsList().find(
+      (p) => String(p.id) === cleanId || String(p._id) === cleanId
     )
+    if (localMatch) {
+      return { success: true, data: localMatch }
+    }
+
+    if (error instanceof ApiError) throw error
+    throw new ApiError(error.message || 'Unable to connect to Forma Mart server.', 0)
   }
 }
